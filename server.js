@@ -1,114 +1,209 @@
 const express = require("express");
 const multer = require("multer");
-const fs = require("fs");
+const cloudinary = require("./cloudinary");
+const { createClient } = require("@supabase/supabase-js");
 const path = require("path");
 
 const app = express();
 
-app.use(express.static("public"));
-app.use(express.json());
+// =======================
+// LIMITES RENDER/CELULAR
+// =======================
+app.use(express.json({ limit: "50mb" }));
 
-app.use(
-    "/uploads",
-    express.static("public/uploads")
+app.use(express.urlencoded({
+  extended: true,
+  limit: "50mb"
+}));
+
+// =======================
+// PUBLIC
+// =======================
+app.use(express.static(path.join(__dirname, "public")));
+
+// =======================
+// SUPABASE
+// =======================
+const supabase = createClient(
+  "https://btbiztabjtaqcvvnlipv.supabase.co",
+  "sb_publishable_IZvyp36Lbx3iS8FC4Ys23w_POOQ4ycn"
 );
 
-const storage = multer.diskStorage({
+// =======================
+// MULTER
+// =======================
+const upload = multer({
+  storage: multer.memoryStorage(),
 
-    destination:(req,file,cb)=>{
+  limits: {
+    fileSize: 10 * 1024 * 1024
+  }
+});
 
-        cb(null,"public/uploads");
+// =======================
+// HOME
+// =======================
+app.get("/", (req, res) => {
 
-    },
+  res.sendFile(
+    path.join(__dirname, "public", "index.html")
+  );
 
-    filename:(req,file,cb)=>{
+});
 
-        cb(
-            null,
-            Date.now() +
-            path.extname(file.originalname)
+// =======================
+// ADMIN
+// =======================
+app.get("/admin", (req, res) => {
+
+  res.sendFile(
+    path.join(__dirname, "public", "admin.html")
+  );
+
+});
+
+// =======================
+// PEGAR POSTS
+// =======================
+app.get("/posts", async (req, res) => {
+
+  const { data, error } = await supabase
+    .from("posts")
+    .select("*")
+    .order("id", { ascending: false });
+
+  if (error) {
+
+    console.log(error);
+
+    return res.status(500).json(error);
+
+  }
+
+  res.json(data);
+
+});
+
+// =======================
+// FUNÇÃO POST
+// =======================
+async function criarPost(req, res){
+
+  try {
+
+    const text = req.body.text || "";
+
+    let imageUrl = "";
+
+    // =======================
+    // CLOUDINARY
+    // =======================
+    if (req.file) {
+
+      const result = await new Promise((resolve, reject) => {
+
+        const stream =
+        cloudinary.uploader.upload_stream(
+
+          {
+            folder: "yekevzus"
+          },
+
+          (error, result) => {
+
+            if (error) {
+              reject(error);
+            }
+
+            else {
+              resolve(result);
+            }
+
+          }
+
         );
 
-    }
+        stream.end(req.file.buffer);
 
-});
+      });
 
-const upload = multer({storage});
-
-let posts = [];
-
-if(fs.existsSync("data.json")){
-
-    const data =
-    fs.readFileSync("data.json");
-
-    if(data.length > 0){
-
-        posts = JSON.parse(data);
+      imageUrl = result.secure_url;
 
     }
 
+    // =======================
+    // SUPABASE
+    // =======================
+    const { data, error } =
+    await supabase
+      .from("posts")
+      .insert([
+        {
+          text: text,
+          image: imageUrl
+        }
+      ])
+      .select();
+
+    if (error) {
+
+      console.log(error);
+
+      return res.status(500).json({
+        error: error.message
+      });
+
+    }
+
+    console.log("🌙 Post criado");
+
+    res.json({
+      success: true,
+      post: data
+    });
+
+  }
+
+  catch (err) {
+
+    console.log(err);
+
+    res.status(500).json({
+      error: err.message
+    });
+
+  }
+
 }
 
-function savePosts(){
-
-    fs.writeFileSync(
-
-        "data.json",
-
-        JSON.stringify(
-            posts,
-            null,
-            2
-        )
-
-    );
-
-}
-
-app.get("/posts",(req,res)=>{
-
-    res.json(posts);
-
-});
-
+// =======================
+// ROTAS
+// =======================
 app.post(
-    "/post",
-    upload.single("image"),
-    (req,res)=>{
-
-        const post = {
-
-            id:Date.now(),
-
-            text:req.body.text,
-
-            color:req.body.color,
-
-            shape:req.body.shape,
-
-            image:req.file
-                ? "/uploads/" +
-                  req.file.filename
-                : "",
-
-            createdAt:new Date()
-
-        };
-
-        posts.unshift(post);
-
-        savePosts();
-
-        res.json(post);
-
-    }
+  "/posts",
+  upload.single("image"),
+  criarPost
 );
 
-app.listen(3000,()=>{
+app.post(
+  "/upload",
+  upload.single("image"),
+  criarPost
+);
 
-    console.log(
-        "🌙 yeKEVzus rodando"
-    );
+app.post(
+  "/uploads",
+  upload.single("image"),
+  criarPost
+);
+
+// =======================
+// START
+// =======================
+app.listen(3000, () => {
+
+  console.log(
+    "🌙 yeKEVzus API rodando 🚀"
+  );
 
 });
